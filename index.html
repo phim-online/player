@@ -42,93 +42,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-    // Logic loại bỏ quảng cáo
+    // Logic loại bỏ quảng cáo (dùng pattern ngắn gọn)
     function removeAdsFromManifest(manifestText) {
-        const lines = manifestText.split('\n');
-        const cleanedLines = [];
-        let buffer = [];
-        let inAdBlock = false;
-        let blockStartLine = -1;
+        return manifestText.replace(
+            /#EXT-X-DISCONTINUITY[\s\S]*?#EXT-X-DISCONTINUITY/g,
+            block => {
+                const durations = [...block.matchAll(/#EXTINF:([\d.]+)/g)].map(m => +m[1]);
+                const segs = durations.length;
+                const shortSegs = durations.filter(d => d < 3).length;
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-
-            if (line.startsWith('#EXT-X-DISCONTINUITY')) {
-                if (inAdBlock) {
-                    let totalDuration = 0;
-                    let segmentCount = 0;
-
-                    for (const bufferedLine of buffer) {
-                        if (bufferedLine.startsWith('#EXTINF:')) {
-                            const durationMatch = bufferedLine.match(/#EXTINF:([\d.]+)/);
-                            if (durationMatch) {
-                                totalDuration += parseFloat(durationMatch[1]);
-                                segmentCount++;
-                            }
-                        }
-                    }
-                    const isAdBlock =
-                        segmentCount > 10 &&
-                        totalDuration > 20 &&
-                        totalDuration < 90;
-
-                    if (!isAdBlock) {
-                        cleanedLines.push(...buffer);
-                    }
-                    buffer = [];
-                    inAdBlock = false;
-                    cleanedLines.push(line);
-                } else {
-                    inAdBlock = true;
-                    blockStartLine = i;
-                    buffer.push(line);
-                }
-            } else if (inAdBlock) {
-                buffer.push(line);
-            } else {
-                cleanedLines.push(line);
+                const isAd = segs < 20 && shortSegs > segs / 2;
+                return isAd ? "#EXT-X-DISCONTINUITY\n#EXT-X-DISCONTINUITY" : block;
             }
-        }
-
-        if (inAdBlock) {
-            let totalDuration = 0;
-            let segmentCount = 0;
-            for (const bufferedLine of buffer) {
-                if (bufferedLine.startsWith('#EXTINF:')) {
-                    const durationMatch = bufferedLine.match(/#EXTINF:([\d.]+)/);
-                    if (durationMatch) {
-                        totalDuration += parseFloat(durationMatch[1]);
-                        segmentCount++;
-                    }
-                }
-            }
-            const isAdBlock =
-                segmentCount > 10 &&
-                totalDuration > 20 &&
-                totalDuration < 90;
-
-            if (!isAdBlock) {
-                cleanedLines.push(...buffer);
-            }
-        }
-
-        if (cleanedLines.length > 0 && cleanedLines[cleanedLines.length - 1].startsWith('#EXT-X-DISCONTINUITY')) {
-            const lastBlock = lines.slice(blockStartLine);
-            let totalDuration = 0;
-            for (const line of lastBlock) {
-                if (line.startsWith('#EXTINF:')) {
-                    const match = line.match(/#EXTINF:([\d.]+)/);
-                    if (match) {
-                        totalDuration += parseFloat(match[1]);
-                    }
-                }
-            }
-            if (totalDuration === 0) {
-                cleanedLines.pop();
-            }
-        }
-        
-        return cleanedLines.join('\n');
+        );
     }
 
     // Xử lý playlist tổng thể
@@ -146,6 +72,7 @@
 
         let playlistText = await req.text();
 
+        // chuẩn hóa link tuyệt đối
         playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
             try {
                 const parsedUrl = new URL(line, playlistUrl);
@@ -155,6 +82,7 @@
             }
         });
 
+        // nếu là master playlist thì load tiếp
         if (playlistText.includes('#EXT-X-STREAM-INF')) {
             const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
             return fetchAndProcessPlaylist(subPlaylistUrl);
