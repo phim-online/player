@@ -14,6 +14,7 @@
             align-items: center;
             height: 100vh;
             margin: 0;
+            flex-direction: column;
         }
         #video-container {
             width: 90%;
@@ -41,6 +42,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
+    // Logic loại bỏ quảng cáo
     function removeAdsFromManifest(manifestText) {
         const lines = manifestText.split('\n');
         const cleanedLines = [];
@@ -129,47 +131,69 @@
         return cleanedLines.join('\n');
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
+    // Xử lý playlist tổng thể
+    async function fetchAndProcessPlaylist(playlistUrl) {
+        let req;
+        try {
+            req = await fetch(playlistUrl);
+            if (!req.ok) {
+                throw new Error(`Failed to fetch playlist: ${req.statusText}`);
+            }
+        } catch (error) {
+            console.error('Failed to fetch playlist:', error);
+            return playlistUrl;
+        }
+
+        let playlistText = await req.text();
+
+        playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
+            try {
+                const parsedUrl = new URL(line, playlistUrl);
+                return parsedUrl.toString();
+            } catch {
+                return line;
+            }
+        });
+
+        if (playlistText.includes('#EXT-X-STREAM-INF')) {
+            const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
+            return fetchAndProcessPlaylist(subPlaylistUrl);
+        }
+
+        const processedPlaylist = removeAdsFromManifest(playlistText);
+
+        const blobUrl = URL.createObjectURL(
+            new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
+        );
+        
+        return blobUrl;
+    }
+    
+    document.addEventListener('DOMContentLoaded', async () => {
         const video = document.getElementById('video');
         const urlParams = new URLSearchParams(window.location.search);
         const m3u8Url = urlParams.get('url') || 'https://s5.phim1280.tv/20250516/FrrHOHan/index.m3u8';
 
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            
-            hls.on(Hls.Events.MANIFEST_LOADING, (event, data) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', data.url);
-                xhr.onload = function() {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        const originalManifest = xhr.responseText;
-                        const cleanedManifest = removeAdsFromManifest(originalManifest);
-                        hls.loadSource(URL.createObjectURL(new Blob([cleanedManifest], { type: 'application/vnd.apple.mpegurl' })));
-                    } else {
-                        console.error('Error loading manifest:', xhr.status, xhr.statusText);
-                    }
-                };
-                xhr.onerror = function() {
-                    console.error('Network error loading manifest.');
-                };
-                xhr.send();
-                
-                event.preventDefault(); 
-            });
+        try {
+            const processedUrl = await fetchAndProcessPlaylist(m3u8Url);
 
-            hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                video.play();
-            });
-            
-            hls.loadSource(m3u8Url); 
-            hls.attachMedia(video);
-
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Logic cho trình duyệt hỗ trợ gốc, không áp dụng việc loại bỏ quảng cáo
-            video.src = m3u8Url;
-            video.addEventListener('loadedmetadata', function() {
-                video.play();
-            });
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(processedUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = processedUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            } else {
+                console.error("Trình duyệt không hỗ trợ HLS.");
+            }
+        } catch (error) {
+            console.error("Lỗi khi xử lý playlist:", error);
         }
     });
 </script>
