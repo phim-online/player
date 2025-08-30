@@ -62,7 +62,7 @@
             const shortSegs = durations.filter(d => d < 3).length;
 
             // Rule quảng cáo
-            const isAd = segs > 2 && (segs < 20 || shortSegs > segs / 2);
+            const isAd = segs > 16 && (segs < 20 || shortSegs > segs / 2);
 
             if (isAd) {
                 result += "#EXT-X-DISCONTINUITY\n";
