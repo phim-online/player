@@ -42,16 +42,30 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-    // Logic loại bỏ quảng cáo
-    function removeAdsFromManifest(manifestText) {
+    // Logic loại bỏ quảng cáo + xử lý convertv7
+    function removeAdsFromManifest(manifestText, playlistUrl) {
         return manifestText.replace(
             /(?:^|#EXT-X-DISCONTINUITY)[\s\S]*?(?=#EXT-X-DISCONTINUITY|$)/g,
             block => {
+                // ---- xử lý convertv7 và chuẩn hoá link ----
+                block = block.replace(/^[^#].*$/gm, line => {
+                    try {
+                        if (line.startsWith("http")) {
+                            line = line.replace("/convertv7/", "/");
+                        }
+                        const parsedUrl = new URL(line, playlistUrl);
+                        return parsedUrl.toString();
+                    } catch {
+                        return line;
+                    }
+                });
+
+                // ---- logic phát hiện quảng cáo ----
                 const durations = [...block.matchAll(/#EXTINF:([\d.]+)/g)].map(m => +m[1]);
                 const segs = durations.length;
                 const shortSegs = durations.filter(d => d < 3).length;
 
-                // Rule: nhiều segment ngắn hoặc block quá ít segment → quảng cáo
+                // Rule: block có >2 segment thì mới xét
                 const isAd = segs > 2 && (segs < 20 || shortSegs > segs / 2);
 
                 return isAd ? "#EXT-X-DISCONTINUITY\n" : block;
@@ -72,30 +86,18 @@
 
         let playlistText = await req.text();
 
-        // Chuẩn hoá link segment về absolute URL
-        playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
-            try {
-                const parsedUrl = new URL(line, playlistUrl);
-                return parsedUrl.toString();
-            } catch {
-                return line;
-            }
-        });
-
         // Nếu là master playlist → load sub
         if (playlistText.includes('#EXT-X-STREAM-INF')) {
             const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
             return fetchAndProcessPlaylist(subPlaylistUrl);
         }
 
-        // Lọc quảng cáo
-        const processedPlaylist = removeAdsFromManifest(playlistText);
+        // Lọc quảng cáo + convertv7
+        const processedPlaylist = removeAdsFromManifest(playlistText, playlistUrl);
 
-        const blobUrl = URL.createObjectURL(
+        return URL.createObjectURL(
             new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
         );
-        
-        return blobUrl;
     }
     
     document.addEventListener('DOMContentLoaded', async () => {
