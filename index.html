@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video M3U8 Player</title>
+    <title>Video M3U8 Player (No Ads)</title>
     <style>
         body {
             background-color: #121212;
@@ -42,17 +42,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-    // Logic loại bỏ quảng cáo (dùng pattern ngắn gọn)
+    // Logic loại bỏ quảng cáo
     function removeAdsFromManifest(manifestText) {
         return manifestText.replace(
-            /#EXT-X-DISCONTINUITY[\s\S]*?#EXT-X-DISCONTINUITY/g,
+            /(?:^|#EXT-X-DISCONTINUITY)[\s\S]*?(?=#EXT-X-DISCONTINUITY|$)/g,
             block => {
                 const durations = [...block.matchAll(/#EXTINF:([\d.]+)/g)].map(m => +m[1]);
                 const segs = durations.length;
                 const shortSegs = durations.filter(d => d < 3).length;
 
-                const isAd = segs < 20 && shortSegs > segs / 2;
-                return isAd ? "#EXT-X-DISCONTINUITY\n#EXT-X-DISCONTINUITY" : block;
+                // Rule: nhiều segment ngắn hoặc block quá ít segment → quảng cáo
+                const isAd = segs > 0 && (segs < 20 || shortSegs > segs / 2);
+
+                return isAd ? "#EXT-X-DISCONTINUITY\n" : block;
             }
         );
     }
@@ -62,9 +64,7 @@
         let req;
         try {
             req = await fetch(playlistUrl);
-            if (!req.ok) {
-                throw new Error(`Failed to fetch playlist: ${req.statusText}`);
-            }
+            if (!req.ok) throw new Error(`Failed to fetch playlist: ${req.statusText}`);
         } catch (error) {
             console.error('Failed to fetch playlist:', error);
             return playlistUrl;
@@ -72,7 +72,7 @@
 
         let playlistText = await req.text();
 
-        // chuẩn hóa link tuyệt đối
+        // Chuẩn hoá link segment về absolute URL
         playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
             try {
                 const parsedUrl = new URL(line, playlistUrl);
@@ -82,12 +82,13 @@
             }
         });
 
-        // nếu là master playlist thì load tiếp
+        // Nếu là master playlist → load sub
         if (playlistText.includes('#EXT-X-STREAM-INF')) {
             const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
             return fetchAndProcessPlaylist(subPlaylistUrl);
         }
 
+        // Lọc quảng cáo
         const processedPlaylist = removeAdsFromManifest(playlistText);
 
         const blobUrl = URL.createObjectURL(
@@ -109,14 +110,10 @@
                 const hls = new Hls();
                 hls.loadSource(processedUrl);
                 hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                    video.play();
-                });
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = processedUrl;
-                video.addEventListener('loadedmetadata', function() {
-                    video.play();
-                });
+                video.addEventListener('loadedmetadata', () => video.play());
             } else {
                 console.error("Trình duyệt không hỗ trợ HLS.");
             }
