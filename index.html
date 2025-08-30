@@ -52,7 +52,7 @@
                 const shortSegs = durations.filter(d => d < 3).length;
 
                 // Rule: nhiều segment ngắn hoặc block quá ít segment → quảng cáo
-                const isAd = segs > 0 && (segs < 20 || shortSegs > segs / 2);
+                const isAd = segs > 2 && (segs < 20 || shortSegs > segs / 2);
 
                 return isAd ? "#EXT-X-DISCONTINUITY\n" : block;
             }
