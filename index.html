@@ -27,11 +27,6 @@
             width: 100%;
             height: auto;
         }
-        h1 {
-            text-align: center;
-            margin-top: 20px;
-            font-size: 1.5rem;
-        }
     </style>
 </head>
 <body>
@@ -41,130 +36,18 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+
+<script src="https://clean-manifest.pages.dev/manifest-processor.js"></script>
+
 <script>
-    function cleanManifest(manifest, opts = {}) {
-      const {
-        onlyIfUrlMatches = null,   // RegExp lọc URL (null = bỏ qua)
-        minSegments = 0,           // số segment tối thiểu
-        maxSegments = Infinity,    // số segment tối đa
-        removeAllDiscontinuity = true
-      } = opts;
-
-      // chuẩn hoá newline
-      const lines = manifest.replace(/\r\n/g, '\n').split('\n');
-
-      // tìm index của #EXT-X-DISCONTINUITY
-      const discIndices = [];
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim() === '#EXT-X-DISCONTINUITY') discIndices.push(i);
-      }
-
-      const toRemove = new Array(lines.length).fill(false);
-
-      // xét từng cặp discontinuity
-      for (let p = 0; p < discIndices.length - 1; p++) {
-        const i = discIndices[p];
-        const j = discIndices[p + 1];
-
-        let segmentCount = 0;
-        let hasMatchingTs = false;
-
-        for (let k = i + 1; k < j; k++) {
-          const t = lines[k].trim();
-          if (/\.ts($|\?)/i.test(t)) {
-            segmentCount++;
-            if (!onlyIfUrlMatches || onlyIfUrlMatches.test(t)) {
-              hasMatchingTs = true;
-            }
-          }
-        }
-
-        // kiểm tra điều kiện xoá
-        // Cập nhật logic: xoá nếu số segment nằm trong khoảng từ 10 đến 18
-        if (segmentCount >= minSegments && segmentCount <= maxSegments) {
-          for (let k = i; k <= j; k++) {
-            toRemove[k] = true;
-          }
-        }
-      }
-
-      // xoá KEY=NONE
-      for (let i = 0; i < lines.length; i++) {
-        if (/^#EXT-X-KEY:METHOD=NONE\b/.test(lines[i].trim())) {
-          toRemove[i] = true;
-        }
-      }
-
-      // tuỳ chọn xoá tất cả DISCONTINUITY còn lại
-      if (removeAllDiscontinuity) {
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].trim() === '#EXT-X-DISCONTINUITY') toRemove[i] = true;
-        }
-      }
-
-      // build lại manifest, đồng thời xoá /convertv7/ hoặc /converttv7/
-      const out = [];
-      for (let i = 0; i < lines.length; i++) {
-        if (toRemove[i]) continue;
-        let L = lines[i]
-          .replace(/\/convertv7\//g, '/')
-          .replace(/\/converttv7\//g, '/');
-        out.push(L);
-      }
-
-      return out.join('\n').replace(/\n{2,}/g, '\n').trim();
-    }
-
-    async function fetchAndProcessPlaylist(playlistUrl) {
-        let req;
-        try {
-            req = await fetch(playlistUrl);
-            if (!req.ok) throw new Error(`Failed to fetch playlist: ${req.statusText}`);
-        } catch (error) {
-            console.error('Failed to fetch playlist:', error);
-            return playlistUrl;
-        }
-
-        let playlistText = await req.text();
-
-        // Chuẩn hoá link segment về absolute URL
-        playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
-            try {
-                const parsedUrl = new URL(line, playlistUrl);
-                return parsedUrl.toString();
-            } catch {
-                return line;
-            }
-        });
-
-        // Nếu là master playlist → load sub
-        if (playlistText.includes('#EXT-X-STREAM-INF')) {
-            const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
-            return fetchAndProcessPlaylist(subPlaylistUrl);
-        }
-
-        // Lọc quảng cáo + sửa convertv7
-        // Cấu hình cleanManifest để xóa các khối có 10-18 segments
-        const processedPlaylist = cleanManifest(playlistText, {
-            minSegments: 10,
-            maxSegments: 18,
-            removeAllDiscontinuity: true
-        });
-
-        const blobUrl = URL.createObjectURL(
-            new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
-        );
-
-        return blobUrl;
-    }
-
     document.addEventListener('DOMContentLoaded', async () => {
         const video = document.getElementById('video');
         const urlParams = new URLSearchParams(window.location.search);
         const m3u8Url = urlParams.get('url') || 'https://s5.phim1280.tv/20250516/FrrHOHan/index.m3u8';
 
         try {
-            const processedUrl = await fetchAndProcessPlaylist(m3u8Url);
+            // Gọi hàm fetchAndProcessPlaylist từ file JS mà bạn đã import
+            const processedUrl = await window.fetchAndProcessPlaylist(m3u8Url);
 
             if (Hls.isSupported()) {
                 const hls = new Hls();
