@@ -1,116 +1,142 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Video M3U8 Player (No Ads)</title>
-  <style>
-    body {
-      background-color: #121212;
-      color: #e0e0e0;
-      font-family: sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      margin: 0;
-      flex-direction: column;
-    }
-    #video-container {
-      width: 90%;
-      max-width: 1280px;
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    video { width: 100%; height: auto; }
-    h1 { text-align: center; margin-top: 20px; font-size: 1.5rem; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video M3U8 Player (No Ads)</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #e0e0e0;
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            flex-direction: column;
+        }
+        #video-container {
+            width: 90%;
+            max-width: 1280px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        video {
+            width: 100%;
+            height: auto;
+        }
+        h1 {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 1.5rem;
+        }
+    </style>
 </head>
 <body>
 
 <div id="video-container">
-  <video id="video" controls></video>
+    <video id="video" controls></video>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-  function removeAdsAndFix(manifestText) {
-    manifestText = manifestText.replace(/\r\n/g, '\n');
-    manifestText = manifestText.replace(/\/convertv7\//g, '/');
-    manifestText = manifestText.replace(/#EXT-X-DISCONTINUITY([\s\S]*?)#EXT-X-DISCONTINUITY/g, (fullMatch, inner) => {
-      const segCount = (inner.match(/#EXTINF\s*:\s*[\d.]+/g) || []).length;
+    // Hàm lọc quảng cáo và sửa convertv7 trong block
+    function removeAdsFromManifest(manifestText) {
+        const blocks = manifestText.split(/(#EXT-X-DISCONTINUITY\s*)/g);
+        let result = '';
 
-      if (segCount >= 10 && segCount <= 18) {
-        return '#EXT-X-DISCONTINUITY\n';
-      }
-      return fullMatch;
+        for (let i = 0; i < blocks.length; i++) {
+            let block = blocks[i];
+
+            // Nếu là DISCONTINUITY thì giữ nguyên
+            if (block.startsWith('#EXT-X-DISCONTINUITY')) {
+                result += block;
+                continue;
+            }
+
+            // Tính số segment và độ dài
+            const durations = [...block.matchAll(/#EXTINF:([\d.]+)/g)].map(m => +m[1]);
+            const segs = durations.length;
+            const shortSegs = durations.filter(d => d < 3).length;
+
+            // Rule quảng cáo
+            const isAd = segs > 10 && (segs < 20 || shortSegs > segs / 2);
+
+            if (isAd) {
+                result += "#EXT-X-DISCONTINUITY\n";
+            } else {
+                // Chỉ sửa link convertv7 trong segment, không ảnh hưởng các segment khác
+                const newBlock = block.replace(/^(https?:\/\/[^\s]*\/)convertv7\/([^\s]+)$/gm, '$1$2');
+                result += newBlock;
+            }
+        }
+
+        return result;
+    }
+
+    async function fetchAndProcessPlaylist(playlistUrl) {
+        let req;
+        try {
+            req = await fetch(playlistUrl);
+            if (!req.ok) throw new Error(`Failed to fetch playlist: ${req.statusText}`);
+        } catch (error) {
+            console.error('Failed to fetch playlist:', error);
+            return playlistUrl;
+        }
+
+        let playlistText = await req.text();
+
+        // Chuẩn hoá link segment về absolute URL
+        playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
+            try {
+                const parsedUrl = new URL(line, playlistUrl);
+                return parsedUrl.toString();
+            } catch {
+                return line;
+            }
+        });
+
+        // Nếu là master playlist → load sub
+        if (playlistText.includes('#EXT-X-STREAM-INF')) {
+            const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
+            return fetchAndProcessPlaylist(subPlaylistUrl);
+        }
+
+        // Lọc quảng cáo + sửa convertv7
+        const processedPlaylist = removeAdsFromManifest(playlistText);
+
+        const blobUrl = URL.createObjectURL(
+            new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
+        );
+
+        return blobUrl;
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        const video = document.getElementById('video');
+        const urlParams = new URLSearchParams(window.location.search);
+        const m3u8Url = urlParams.get('url') || 'https://s5.phim1280.tv/20250516/FrrHOHan/index.m3u8';
+
+        try {
+            const processedUrl = await fetchAndProcessPlaylist(m3u8Url);
+
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(processedUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = processedUrl;
+                video.addEventListener('loadedmetadata', () => video.play());
+            } else {
+                console.error("Trình duyệt không hỗ trợ HLS.");
+            }
+        } catch (error) {
+            console.error("Lỗi khi xử lý playlist:", error);
+        }
     });
-    manifestText = manifestText.replace(/\n(?:#EXT-X-DISCONTINUITY\s*\n){2,}/g, '\n#EXT-X-DISCONTINUITY\n');
-    return manifestText;
-  }
-
-  async function fetchAndProcessPlaylist(playlistUrl) {
-    let req;
-    try {
-      req = await fetch(playlistUrl);
-      if (!req.ok) throw new Error(`Failed to fetch playlist: ${req.statusText}`);
-    } catch (error) {
-      console.error('Failed to fetch playlist:', error);
-      return playlistUrl;
-    }
-
-    let playlistText = await req.text();
-
-    // Chuẩn hoá link segment về absolute URL
-    playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
-      try {
-        const parsedUrl = new URL(line, playlistUrl);
-        return parsedUrl.toString();
-      } catch {
-        return line;
-      }
-    });
-
-    // Nếu là master playlist → load sub
-    if (playlistText.includes('#EXT-X-STREAM-INF')) {
-      const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
-      return fetchAndProcessPlaylist(subPlaylistUrl);
-    }
-
-    // Lọc quảng cáo + xoá convertv7
-    const processedPlaylist = removeAdsAndFix(playlistText);
-
-    const blobUrl = URL.createObjectURL(
-      new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
-    );
-
-    return blobUrl;
-  }
-
-  document.addEventListener('DOMContentLoaded', async () => {
-    const video = document.getElementById('video');
-    const urlParams = new URLSearchParams(window.location.search);
-    const m3u8Url = urlParams.get('url') || 'https://s5.phim1280.tv/20250516/FrrHOHan/index.m3u8';
-
-    try {
-      const processedUrl = await fetchAndProcessPlaylist(m3u8Url);
-
-      if (Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(processedUrl);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = processedUrl;
-        video.addEventListener('loadedmetadata', () => video.play());
-      } else {
-        console.error("Trình duyệt không hỗ trợ HLS.");
-      }
-    } catch (error) {
-      console.error("Lỗi khi xử lý playlist:", error);
-    }
-  });
 </script>
 
 </body>
