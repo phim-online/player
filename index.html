@@ -23,15 +23,8 @@
       border-radius: 8px;
       overflow: hidden;
     }
-    video {
-      width: 100%;
-      height: auto;
-    }
-    h1 {
-      text-align: center;
-      margin-top: 20px;
-      font-size: 1.5rem;
-    }
+    video { width: 100%; height: auto; }
+    h1 { text-align: center; margin-top: 20px; font-size: 1.5rem; }
   </style>
 </head>
 <body>
@@ -43,13 +36,17 @@
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
   function removeAdsAndFix(manifestText) {
-    manifestText = manifestText.replace(
-      /#EXT-X-DISCONTINUITY(?=(?:(?:\n#EXTINF:[\d.]+,[^\n]*){10,18}\n))[\s\S]*?#EXT-X-DISCONTINUITY/g,
-      "#EXT-X-DISCONTINUITY\n"
-    );
+    manifestText = manifestText.replace(/\r\n/g, '\n');
+    manifestText = manifestText.replace(/\/convertv7\//g, '/');
+    manifestText = manifestText.replace(/#EXT-X-DISCONTINUITY([\s\S]*?)#EXT-X-DISCONTINUITY/g, (fullMatch, inner) => {
+      const segCount = (inner.match(/#EXTINF\s*:\s*[\d.]+/g) || []).length;
 
-    manifestText = manifestText.replace(/\/convertv7\//g, "/");
-
+      if (segCount >= 10 && segCount <= 18) {
+        return '#EXT-X-DISCONTINUITY\n';
+      }
+      return fullMatch;
+    });
+    manifestText = manifestText.replace(/\n(?:#EXT-X-DISCONTINUITY\s*\n){2,}/g, '\n#EXT-X-DISCONTINUITY\n');
     return manifestText;
   }
 
@@ -65,6 +62,7 @@
 
     let playlistText = await req.text();
 
+    // Chuẩn hoá link segment về absolute URL
     playlistText = playlistText.replace(/^[^#].*$/gm, (line) => {
       try {
         const parsedUrl = new URL(line, playlistUrl);
@@ -74,11 +72,13 @@
       }
     });
 
+    // Nếu là master playlist → load sub
     if (playlistText.includes('#EXT-X-STREAM-INF')) {
       const subPlaylistUrl = playlistText.trim().split('\n').slice(-1)[0];
       return fetchAndProcessPlaylist(subPlaylistUrl);
     }
 
+    // Lọc quảng cáo + xoá convertv7
     const processedPlaylist = removeAdsAndFix(playlistText);
 
     const blobUrl = URL.createObjectURL(
