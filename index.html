@@ -42,38 +42,77 @@
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <script>
-    // Hàm lọc quảng cáo và sửa convertv7 trong block
-    function removeAdsFromManifest(manifestText) {
-        const blocks = manifestText.split(/(#EXT-X-DISCONTINUITY\s*)/g);
-        let result = '';
+    function cleanManifest(manifest, opts = {}) {
+      const {
+        onlyIfUrlMatches = null,   // RegExp lọc URL (null = bỏ qua)
+        minSegments = 0,           // số segment tối thiểu
+        maxSegments = Infinity,    // số segment tối đa
+        removeAllDiscontinuity = true
+      } = opts;
 
-        for (let i = 0; i < blocks.length; i++) {
-            let block = blocks[i];
+      // chuẩn hoá newline
+      const lines = manifest.replace(/\r\n/g, '\n').split('\n');
 
-            // Nếu là DISCONTINUITY thì giữ nguyên
-            if (block.startsWith('#EXT-X-DISCONTINUITY')) {
-                result += block;
-                continue;
+      // tìm index của #EXT-X-DISCONTINUITY
+      const discIndices = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].trim() === '#EXT-X-DISCONTINUITY') discIndices.push(i);
+      }
+
+      const toRemove = new Array(lines.length).fill(false);
+
+      // xét từng cặp discontinuity
+      for (let p = 0; p < discIndices.length - 1; p++) {
+        const i = discIndices[p];
+        const j = discIndices[p + 1];
+
+        let segmentCount = 0;
+        let hasMatchingTs = false;
+
+        for (let k = i + 1; k < j; k++) {
+          const t = lines[k].trim();
+          if (/\.ts($|\?)/i.test(t)) {
+            segmentCount++;
+            if (!onlyIfUrlMatches || onlyIfUrlMatches.test(t)) {
+              hasMatchingTs = true;
             }
-
-            // Tính số segment và độ dài
-            const durations = [...block.matchAll(/#EXTINF:([\d.]+)/g)].map(m => +m[1]);
-            const segs = durations.length;
-            const shortSegs = durations.filter(d => d < 3).length;
-
-            // Rule quảng cáo
-            const isAd = segs > 10 && (segs < 20 || shortSegs > segs / 2);
-
-            if (isAd) {
-                result += "#EXT-X-DISCONTINUITY\n";
-            } else {
-                // Chỉ sửa link convertv7 trong segment, không ảnh hưởng các segment khác
-                const newBlock = block.replace(/^(https?:\/\/[^\s]*\/)convertv7\/([^\s]+)$/gm, '$1$2');
-                result += newBlock;
-            }
+          }
         }
 
-        return result;
+        // kiểm tra điều kiện xoá
+        // Cập nhật logic: xoá nếu số segment nằm trong khoảng từ 10 đến 18
+        if (segmentCount >= minSegments && segmentCount <= maxSegments) {
+          for (let k = i; k <= j; k++) {
+            toRemove[k] = true;
+          }
+        }
+      }
+
+      // xoá KEY=NONE
+      for (let i = 0; i < lines.length; i++) {
+        if (/^#EXT-X-KEY:METHOD=NONE\b/.test(lines[i].trim())) {
+          toRemove[i] = true;
+        }
+      }
+
+      // tuỳ chọn xoá tất cả DISCONTINUITY còn lại
+      if (removeAllDiscontinuity) {
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].trim() === '#EXT-X-DISCONTINUITY') toRemove[i] = true;
+        }
+      }
+
+      // build lại manifest, đồng thời xoá /convertv7/ hoặc /converttv7/
+      const out = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (toRemove[i]) continue;
+        let L = lines[i]
+          .replace(/\/convertv7\//g, '/')
+          .replace(/\/converttv7\//g, '/');
+        out.push(L);
+      }
+
+      return out.join('\n').replace(/\n{2,}/g, '\n').trim();
     }
 
     async function fetchAndProcessPlaylist(playlistUrl) {
@@ -105,7 +144,12 @@
         }
 
         // Lọc quảng cáo + sửa convertv7
-        const processedPlaylist = removeAdsFromManifest(playlistText);
+        // Cấu hình cleanManifest để xóa các khối có 10-18 segments
+        const processedPlaylist = cleanManifest(playlistText, {
+            minSegments: 10,
+            maxSegments: 18,
+            removeAllDiscontinuity: true
+        });
 
         const blobUrl = URL.createObjectURL(
             new Blob([processedPlaylist], { type: req.headers.get('Content-Type') ?? 'text/plain' })
